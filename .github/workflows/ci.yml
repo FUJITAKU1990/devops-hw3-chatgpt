@@ -33,9 +33,6 @@ jobs:
           cp -n .env.example .env
           ./scripts/generate-env-secrets .env
 
-      - name: Validate Compose config
-        run: docker compose config -q
-
       # Docker image builds and the host-side install/build/type-check chain
       # are independent of each other (each Dockerfile installs its own
       # dependencies inside its build context), so run them concurrently
@@ -47,6 +44,9 @@ jobs:
       # `set -e` alone does not catch a failure in a backgrounded command).
       - name: Build Docker images and application concurrently
         run: |
+          docker compose config -q &
+          COMPOSE_CONFIG_PID=$!
+
           docker build -f docker/base.Dockerfile -t tartan-base:local . &
           BASE_PID=$!
 
@@ -64,6 +64,7 @@ jobs:
           FRONTEND=$!
 
           FAIL=0
+          wait "$COMPOSE_CONFIG_PID" || { echo "FAIL: docker compose config validation"; FAIL=1; }
           wait "$BASE_PID" || { echo "FAIL: base image build"; FAIL=1; }
 
           BUILD_PID=""
@@ -113,7 +114,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        run: docker compose down -v
+        run: docker compose down -v --timeout 1
   
   secrets-scan:
     runs-on: ubuntu-24.04

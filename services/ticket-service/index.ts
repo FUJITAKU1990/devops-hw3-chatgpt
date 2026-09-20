@@ -422,9 +422,6 @@ app.post('/events/:id/coupons/preview', async (req, res) => {
         if (!Number.isInteger(eventId)) {
             return res.status(400).json({ error: 'Invalid event id' });
         }
-        if (!Number.isInteger(eventId)) {
-            return res.status(400).json({ error: 'Invalid event id' });
-        }
 
         const { couponCode, tickets } = req.body as {
             couponCode?: string;
