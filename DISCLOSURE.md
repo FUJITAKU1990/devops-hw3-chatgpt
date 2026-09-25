@@ -49,3 +49,7 @@ After Checkpoint B, since the assignment states the additional mistakes are staf
 For the speed bonus, Claude added non-root Docker users, least-privilege permissions: blocks, and a static .env/.gitignore check (bonus-hardening-check); reviewing this surfaced a real regression I fixed myself, where checkout accepted a zero or negative ticket quantity. A shared base image removed duplicate package builds for a small real speedup, while a healthcheck-timing change showed no benefit and was reverted. Measured ci runtime ranged 2m32s-3m01s — usually within 3 minutes but not reliably, so I decided against a larger rebuild.
 
 For the mistake-classification bonus, reviewing ticket-service's real code found that an unvalidated parseInt(:id) (including NaN) and non-numeric ticket-type keys in checkout were passed straight into TypeORM queries, risking an unhandled 500 instead of 400. I added Number.isInteger guards and regression tests for both.
+
+## HW3
+
+For the HW3 design baseline, I used ChatGPT to review the assignment criteria, inspect the existing HW2 Compose and CI configuration, and refine the release path and evidence plan. I chose push deployment, PR review as the human approval point, digest-based artifacts, and manual recovery. ChatGPT also helped me duplicate the submitted course repository into a private working repository and identify the application images that the release must cover. I will update this entry as implementation and deployment work progresses.
