@@ -22,5 +22,14 @@ services:
   frontend:
     image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must be an immutable release digest}
     build: !reset null
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-17643-team11.s3d.cmu.edu}
     ports: !override
-      - "443:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
