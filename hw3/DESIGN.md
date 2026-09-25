@@ -2,42 +2,29 @@
 
 ## Release path
 
-PR
-↓
-Existing HW2 CI checks
-↓
-Human review → Merge to main
-↓
-Build release images for student-controlled components
-↓
-Syft SBOM → Grype vulnerability scan
-├─ Critical vulnerability with a fix available → BLOCK
-↓
-Store images in GHCR + record their digests
-↓
-Push the exact images to the production VM
-↓
-External health check + smoke test
-├─ FAIL → Release failed
-↓
-Release successful
+1. A pull request runs the existing HW2 CI checks. A human reviews the PR and merges it to `main` only after the required checks pass.
+2. The release workflow builds the four student-controlled runtime images (`auth-service`, `ticket-service`, `api-gateway`, and `frontend`). The migrator intentionally reuses the exact `auth-service` image.
+3. Syft generates an SBOM for each image. Grype scans each SBOM and blocks the release when a known Critical vulnerability has a fix available.
+4. Only after the vulnerability gate passes, the workflow publishes the images to GHCR and records their immutable registry digests together with the source commit and workflow run.
+5. Deployment sends the Compose configuration and release record to the production VM. The VM pulls those exact digests and starts the stack with `--no-build`; it does not rebuild student-controlled artifacts.
+6. The workflow compares the running container image IDs with the recorded digests and checks HTTPS reachability. Course external probes are the authoritative verification of the required core user journeys.
 
-PR review and merge to `main` are the human approval point; no additional manual release approval is required. After the merge, the release process is automated. Existing HW2 checks and the vulnerability gate can block deployment.
+PR review and merge to `main` are the human approval point; no additional manual release approval is planned. Existing CI and the vulnerability gate can block deployment.
 
 ## Design choice
 
-I will use push deployment from GitHub Actions to the production VM, keeping CI and release execution in one pipeline and making the path for production changes explicit.
-
-I considered a pull-based deployment model such as Komodo. Pull would require an additional VM-side agent or deployment controller and its operational state to be managed. For this application, continuous reconciliation is not required, so that additional component provides limited benefit. The trade-off is that the push workflow will not continuously detect or correct configuration drift after deployment.
+I use push deployment from GitHub Actions to the production VM, keeping release execution and its evidence in the repository workflow. I considered a pull-based model such as Komodo, but that would add a VM-side controller and operational state. Continuous reconciliation is not required for this single-VM application, so the additional component provides limited benefit. The trade-off is that the push workflow does not continuously detect or correct configuration drift after deployment.
 
 ## Operation and evidence
 
-Release images will be built once from the `main` commit and stored in GHCR. Production will deploy the same images by digest rather than rebuilding them, linking the running artifacts to their source commit.
+A release record identifies the source commit, workflow run, and exact GHCR digests. The deployment workflow also records the deployment action, verifies the running digests, and checks `https://17643-team11.s3d.cmu.edu/` and `/api/events`. After activation, I will add the permanent run/release links and the course external-probe evidence here.
 
-GitHub Actions will record the source commit, image digests, pipeline/deployment result, and smoke-test result. The running digests on the VM can be compared with this record. I will not add a separate release-management system; this limits centralized management and auditing if the deployment grows to many environments or releases.
+To release, merge an approved PR to `main`. To identify production, compare the running image IDs with the release record using `scripts/verify-production-state`. To recover, manually dispatch the release workflow with the source commit of a previous known-good release; the workflow retrieves that release record, redeploys the recorded digests, and repeats verification. Recovery does not rebuild images.
 
-Recovery will be manual. After investigating a failure, I can redeploy a previous known-good set of digests through the release workflow and verify recovery with the external smoke test.
+The main limitation is dependence on the workflow-to-VM connection and the VM container runtime; there is no continuous reconciliation if production drifts outside the release workflow.
 
-## Implementation plan
+## Implementation status
 
-The existing GitHub Actions CI, Docker/Compose setup, automated checks, and secret handling already work. HW3 will add release artifact management, the Syft/Grype gate, push deployment, external smoke testing, and manual recovery. The exact production smoke-test operations remain to be finalized.
+Implemented on the HW3 working branch: release image build, Syft SBOM generation, Grype blocking gate, GHCR publication and digest recording, digest-pinned production Compose configuration, HTTPS/Caddy configuration, automated push deployment, running-digest verification, deployment evidence, and manual recovery by known-good release record.
+
+Remaining before production activation: replace every GitHub Actions `runs-on` value with the course-published self-hosted-runner labels; obtain/use the course deployment guide; confirm the course VM container runtime and HTTPS setup; configure workflow SSH authentication and VM production secrets; run the initial deployment; verify the course external probes; and replace these remaining-status notes with permanent evidence links. The assigned VM is reachable by SSH, but the student account currently has no sudo permission and no Docker, Podman, containerd, or nerdctl command available, so production activation is blocked pending the course VM setup instructions.
