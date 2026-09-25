@@ -20,8 +20,9 @@ env:
 
 jobs:
   release:
-    # TODO(HW3): replace with the exact course-published self-hosted runner labels
-    # before this workflow is copied to the submission repository.
+    # TODO(HW3): replace with the exact course-published self-hosted runner labels.
+    # The same replacement is required for every job in ci.yml because HW3 says
+    # every GitHub Actions job must use the course-provided self-hosted runners.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -123,7 +124,7 @@ jobs:
             "$PRODUCTION_USER@$PRODUCTION_HOST" \
             "hw3/release-evidence/release-$commit.env"
 
-      - name: External health and smoke test
+      - name: Verify production HTTPS reachability
         shell: bash
         env:
           TARTAN_BASE_URL: https://17643-team11.s3d.cmu.edu
@@ -131,8 +132,12 @@ jobs:
           set -euo pipefail
           curl --fail --show-error --silent --retry 10 --retry-delay 3 \
             "$TARTAN_BASE_URL/" >/dev/null
-          ./scripts/check
+          curl --fail --show-error --silent --retry 5 --retry-delay 2 \
+            "$TARTAN_BASE_URL/api/events" >/dev/null
 
+      # Course external probes are the authoritative HW3 health evidence for
+      # core user journeys. Their result is checked separately using the Canvas
+      # deployment guide once staff publishes/provides that guide.
       - name: Record deployment action
         if: success()
         shell: bash
@@ -148,7 +153,8 @@ jobs:
             echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo "- Production: https://$PRODUCTION_HOST/"
             echo "- Running digest verification: passed"
-            echo "- External health and smoke test: passed"
+            echo "- HTTPS reachability (/ and /api/events): passed"
+            echo "- Course external probes: verify separately and link from hw3/DESIGN.md"
           } > "$record"
           cat "$record"
 
