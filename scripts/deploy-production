@@ -19,7 +19,7 @@ remote_dir="${PRODUCTION_DIR:-~/tartan-tickets}"
 # Send only deployment inputs. Production never receives Docker build context for
 # the student-controlled runtime images and never rebuilds them.
 ssh "$ssh_target" "mkdir -p '$remote_dir'"
-scp docker-compose.yml docker-compose.prod.yml "$record" "$ssh_target:$remote_dir/"
+scp docker-compose.yml docker-compose.prod.yml scripts/check-production-env "$record" "$ssh_target:$remote_dir/"
 
 record_name="$(basename "$record")"
 ssh "$ssh_target" bash -s -- "$remote_dir" "$record_name" <<'REMOTE'
@@ -27,6 +27,13 @@ set -euo pipefail
 remote_dir="$1"
 record_name="$2"
 cd "$remote_dir"
+
+[[ -f .env.production ]] || {
+  echo "Missing $remote_dir/.env.production; create it from hw3/env.production.example before deployment" >&2
+  exit 66
+}
+chmod 600 .env.production
+bash ./check-production-env .env.production
 
 set -a
 # shellcheck disable=SC1090
