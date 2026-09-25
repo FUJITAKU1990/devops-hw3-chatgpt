@@ -2,25 +2,13 @@
 
 ## Release path
 
-PR
-↓
-Existing HW2 CI checks
-↓
-Human review → Merge to main
-↓
-Build release images for student-controlled components
-↓
-Syft SBOM → Grype vulnerability scan
-├─ Critical vulnerability with a fix available → BLOCK
-↓
-Store images in GHCR + record their digests
-↓
-Push the exact images to the production VM
-↓
-External health check + smoke test
-├─ FAIL → Release failed
-↓
-Release successful
+1. Open a PR and run the existing HW2 CI checks. A failed check blocks the merge.
+2. Complete human review and merge the approved PR into `main`.
+3. Build the student-controlled release images once from that commit.
+4. Generate a Syft SBOM for each image and scan it with Grype. A fixable Critical vulnerability blocks the release.
+5. Publish the checked images to GHCR and record each immutable digest.
+6. Deploy those exact digests to the production VM through the release workflow.
+7. Run an external health check and a core-user-journey smoke test. A failed check marks the release as failed; passing checks mark it successful.
 
 PR review and merge to `main` are the human approval point; no additional manual release approval is required. After the merge, the release process is automated. Existing HW2 checks and the vulnerability gate can block deployment.
 
