@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Validate the non-image production configuration kept on the VM.
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <.env.production>" >&2
+  exit 64
+fi
+
+file="$1"
+[[ -f "$file" ]] || { echo "Production env not found: $file" >&2; exit 66; }
+
+set -a
+# shellcheck disable=SC1090
+source "$file"
+set +a
+
+required=(
+  POSTGRES_PASSWORD
+  TARTAN_ADMIN_PASSWORD
+  STUDENT_FIXTURE_PASSWORD
+  RELEASE_OPERATOR_PASSWORD
+  SUPPORT_AGENT_PASSWORD
+  JWT_SECRET
+  MP_UI_AUTH
+  PAYMENT_DB_PASSWORD
+  TARTANPAY_API_KEY
+  TARTANPAY_ADMIN_TOKEN
+  APP_URL
+  CADDY_SITE_ADDRESS
+)
+
+for key in "${required[@]}"; do
+  value="${!key:-}"
+  [[ -n "$value" ]] || { echo "Missing ${key}" >&2; exit 65; }
+  [[ "$value" != "CHANGE_ME" ]] || { echo "Replace CHANGE_ME for ${key}" >&2; exit 65; }
+done
+
+[[ "$APP_URL" == https://* ]] || { echo "APP_URL must use https://" >&2; exit 65; }
+[[ "$CADDY_SITE_ADDRESS" == "17643-team11.s3d.cmu.edu" ]] || {
+  echo "Unexpected CADDY_SITE_ADDRESS: $CADDY_SITE_ADDRESS" >&2
+  exit 65
+}
+
+if [[ "${TARTANPAY_LOG_SECRETS:-false}" != "false" ]]; then
+  echo "TARTANPAY_LOG_SECRETS must remain false in production" >&2
+  exit 65
+fi
+
+echo "PASS: production environment is complete"
