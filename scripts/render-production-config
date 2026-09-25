@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Validate a release record and render the exact production Compose configuration.
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <release-record.env>" >&2
+  exit 64
+fi
+
+record="$1"
+[[ -f "$record" ]] || { echo "Release record not found: $record" >&2; exit 66; }
+
+set -a
+# shellcheck disable=SC1090
+source "$record"
+set +a
+
+required=(
+  SOURCE_COMMIT
+  AUTH_SERVICE_IMAGE
+  TICKET_SERVICE_IMAGE
+  API_GATEWAY_IMAGE
+  FRONTEND_IMAGE
+  MIGRATOR_IMAGE
+)
+
+for key in "${required[@]}"; do
+  value="${!key:-}"
+  [[ -n "$value" ]] || { echo "Missing ${key} in ${record}" >&2; exit 65; }
+  if [[ "$key" == *_IMAGE ]] && [[ ! "$value" =~ ^ghcr\.io/.+@sha256:[a-f0-9]{64}$ ]]; then
+    echo "${key} is not an immutable GHCR digest: ${value}" >&2
+    exit 65
+  fi
+done
+
+if [[ "$MIGRATOR_IMAGE" != "$AUTH_SERVICE_IMAGE" ]]; then
+  echo "MIGRATOR_IMAGE must equal AUTH_SERVICE_IMAGE" >&2
+  exit 65
+fi
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config

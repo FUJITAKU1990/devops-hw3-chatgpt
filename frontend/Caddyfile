@@ -1,4 +1,10 @@
-:80 {
+{
+    # Keep local/CI behavior deterministic. Production overrides this address
+    # with CADDY_SITE_ADDRESS so Caddy can terminate HTTPS for the assigned host.
+    auto_https disable_redirects
+}
+
+{$CADDY_SITE_ADDRESS::80} {
     encode gzip
 
     # Proxy all API traffic to the backend gateway
