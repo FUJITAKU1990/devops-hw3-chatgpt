@@ -66,7 +66,12 @@ for component in "${components[@]}"; do
   echo "Publishing ${image}"
   docker push "$image"
 
-  repo_digest="$(docker image inspect --format='{{index .RepoDigests 0}}' "$image")"
+  # Pull the published tag before reading RepoDigests. This makes digest capture
+  # independent of whether the local Docker engine updated RepoDigests on push.
+  docker pull "$image" >/dev/null
+  repo_digest="$(docker image inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$image" \
+    | grep '^ghcr\.io/.*@sha256:[a-f0-9]\{64\}$' \
+    | head -n 1)"
   if [[ ! "$repo_digest" =~ ^ghcr\.io/.+@sha256:[a-f0-9]{64}$ ]]; then
     echo "Could not determine registry digest for ${image}: ${repo_digest}" >&2
     exit 70
