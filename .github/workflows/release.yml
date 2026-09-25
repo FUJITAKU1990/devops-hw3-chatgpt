@@ -133,6 +133,34 @@ jobs:
             "$TARTAN_BASE_URL/" >/dev/null
           ./scripts/check
 
+      - name: Record deployment action
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit='${{ steps.mode.outputs.source_commit }}'
+          record="hw3/release-evidence/deployment-$GITHUB_RUN_ID.md"
+          {
+            echo "# Deployment $GITHUB_RUN_ID"
+            echo
+            echo "- Mode: ${{ steps.mode.outputs.recovery == 'true' && 'recovery' || 'normal' }}"
+            echo "- Source commit: \`$commit\`"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Production: https://$PRODUCTION_HOST/"
+            echo "- Running digest verification: passed"
+            echo "- External health and smoke test: passed"
+          } > "$record"
+          cat "$record"
+
+      - name: Upload deployment evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ github.run_id }}
+          path: hw3/release-evidence/deployment-${{ github.run_id }}.md
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Release summary
         if: always()
         shell: bash
