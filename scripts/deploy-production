@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Deploy an already-published HW3 release to the production VM without rebuilding.
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <ssh-target> <release-record.env>" >&2
+  exit 64
+fi
+
+ssh_target="$1"
+record="$2"
+remote_dir="${PRODUCTION_DIR:-~/tartan-tickets}"
+
+[[ -f "$record" ]] || { echo "Release record not found: $record" >&2; exit 66; }
+
+# Validate the release record locally before sending anything to production.
+./scripts/render-production-config "$record" >/dev/null
+
+# Send only deployment inputs. Production never receives Docker build context for
+# the student-controlled runtime images and never rebuilds them.
+ssh "$ssh_target" "mkdir -p '$remote_dir'"
+scp docker-compose.yml docker-compose.prod.yml "$record" "$ssh_target:$remote_dir/"
+
+record_name="$(basename "$record")"
+ssh "$ssh_target" bash -s -- "$remote_dir" "$record_name" <<'REMOTE'
+set -euo pipefail
+remote_dir="$1"
+record_name="$2"
+cd "$remote_dir"
+
+set -a
+# shellcheck disable=SC1090
+source "$record_name"
+# Production secrets/configuration are kept on the VM, outside the repository.
+source .env.production
+set +a
+
+for key in AUTH_SERVICE_IMAGE TICKET_SERVICE_IMAGE API_GATEWAY_IMAGE FRONTEND_IMAGE MIGRATOR_IMAGE; do
+  value="${!key:-}"
+  [[ "$value" =~ ^ghcr\.io/.+@sha256:[a-f0-9]{64}$ ]] || {
+    echo "Refusing non-digest production image: ${key}=${value}" >&2
+    exit 65
+  }
+done
+
+if [[ "$MIGRATOR_IMAGE" != "$AUTH_SERVICE_IMAGE" ]]; then
+  echo "MIGRATOR_IMAGE must equal AUTH_SERVICE_IMAGE" >&2
+  exit 65
+fi
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build --remove-orphans
+
+echo "SOURCE_COMMIT=${SOURCE_COMMIT}"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+REMOTE
