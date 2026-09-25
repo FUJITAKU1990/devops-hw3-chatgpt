@@ -28,6 +28,7 @@ workflow_run="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$rep
 {
   echo "SOURCE_COMMIT=${commit}"
   echo "WORKFLOW_RUN=${workflow_run}"
+  echo "RELEASE_CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } >> "$record"
 
 docker build -f docker/base.Dockerfile -t tartan-base:hw3-build .
@@ -79,6 +80,25 @@ done
 auth_digest="$(grep '^AUTH_SERVICE_IMAGE=' "$record" | cut -d= -f2-)"
 echo "MIGRATOR_IMAGE=${auth_digest}" >> "$record"
 
+# Keep a compact, human-readable immutable release manifest alongside the raw
+# scanner output. This is suitable for exporting into hw3/ as durable evidence.
+manifest="${artifact_dir}/release-${commit}.md"
+{
+  echo "# Release ${commit}"
+  echo
+  echo "- Source commit: \`${commit}\`"
+  echo "- Workflow run: ${workflow_run}"
+  echo "- Created (UTC): $(grep '^RELEASE_CREATED_AT=' "$record" | cut -d= -f2-)"
+  echo
+  echo "## Exact runtime artifacts"
+  while IFS='=' read -r key value; do
+    case "$key" in
+      *_IMAGE) echo "- ${key}: \`${value}\`" ;;
+    esac
+  done < "$record"
+} > "$manifest"
+
 echo "PASS: all four images built, scanned, published, and recorded"
 echo "Release record: ${record}"
+echo "Release manifest: ${manifest}"
 cat "$record"
