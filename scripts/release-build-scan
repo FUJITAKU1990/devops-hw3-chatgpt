@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Build and scan every student-controlled runtime image before publication.
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <owner/repository> <40-character source commit>" >&2
+  exit 64
+fi
+
+repository="${1,,}"
+commit="$2"
+if [[ ! "$repository" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]] ||
+   [[ ! "$commit" =~ ^[a-f0-9]{40}$ ]]; then
+  echo "Invalid repository or source commit" >&2
+  exit 64
+fi
+
+for tool in docker syft grype; do
+  command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 69; }
+done
+
+artifact_dir="${ARTIFACT_DIR:-hw3/release-evidence}"
+mkdir -p "$artifact_dir"
+
+docker build -f docker/base.Dockerfile -t tartan-base:hw3-build .
+docker tag tartan-base:hw3-build tartan-base:local
+
+components=(
+  'auth-service:services/auth-service/Dockerfile'
+  'ticket-service:services/ticket-service/Dockerfile'
+  'api-gateway:services/api-gateway/Dockerfile'
+  'frontend:frontend/Dockerfile'
+)
+
+for component in "${components[@]}"; do
+  name="${component%%:*}"
+  dockerfile="${component#*:}"
+  image="ghcr.io/${repository}/${name}:sha-${commit}"
+
+  echo "Building ${name} from ${commit}"
+  docker build --label "org.opencontainers.image.revision=${commit}" \
+    -f "$dockerfile" -t "$image" .
+
+  echo "Generating SBOM for ${image}"
+  syft "docker:${image}" -o "syft-json=${artifact_dir}/${name}.sbom.json"
+
+  echo "Checking fixable critical vulnerabilities in ${image}"
+  if grype "sbom:${artifact_dir}/${name}.sbom.json" \
+    --only-fixed --fail-on critical -o json \
+    > "${artifact_dir}/${name}.grype.json"; then
+    echo "PASS: ${name}"
+  else
+    status=$?
+    echo "BLOCK: ${name} (Grype exit ${status}); image was not published" >&2
+    exit "$status"
+  fi
+done
+
+echo "PASS: all four images built and passed the vulnerability gate"
