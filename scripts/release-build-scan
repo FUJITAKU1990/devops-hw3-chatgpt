@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and scan every student-controlled runtime image before publication.
+# Build, scan, publish, and record every student-controlled runtime image.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -21,20 +21,27 @@ done
 
 artifact_dir="${ARTIFACT_DIR:-hw3/release-evidence}"
 mkdir -p "$artifact_dir"
+record="${artifact_dir}/release-${commit}.env"
+: > "$record"
+
+workflow_run="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$repository}/actions/runs/${GITHUB_RUN_ID:-local}"
+{
+  echo "SOURCE_COMMIT=${commit}"
+  echo "WORKFLOW_RUN=${workflow_run}"
+} >> "$record"
 
 docker build -f docker/base.Dockerfile -t tartan-base:hw3-build .
 docker tag tartan-base:hw3-build tartan-base:local
 
 components=(
-  'auth-service:services/auth-service/Dockerfile'
-  'ticket-service:services/ticket-service/Dockerfile'
-  'api-gateway:services/api-gateway/Dockerfile'
-  'frontend:frontend/Dockerfile'
+  'auth-service:services/auth-service/Dockerfile:AUTH_SERVICE_IMAGE'
+  'ticket-service:services/ticket-service/Dockerfile:TICKET_SERVICE_IMAGE'
+  'api-gateway:services/api-gateway/Dockerfile:API_GATEWAY_IMAGE'
+  'frontend:frontend/Dockerfile:FRONTEND_IMAGE'
 )
 
 for component in "${components[@]}"; do
-  name="${component%%:*}"
-  dockerfile="${component#*:}"
+  IFS=: read -r name dockerfile record_key <<< "$component"
   image="ghcr.io/${repository}/${name}:sha-${commit}"
 
   echo "Building ${name} from ${commit}"
@@ -54,6 +61,24 @@ for component in "${components[@]}"; do
     echo "BLOCK: ${name} (Grype exit ${status}); image was not published" >&2
     exit "$status"
   fi
+
+  echo "Publishing ${image}"
+  docker push "$image"
+
+  repo_digest="$(docker image inspect --format='{{index .RepoDigests 0}}' "$image")"
+  if [[ ! "$repo_digest" =~ ^ghcr\.io/.+@sha256:[a-f0-9]{64}$ ]]; then
+    echo "Could not determine registry digest for ${image}: ${repo_digest}" >&2
+    exit 70
+  fi
+
+  echo "${record_key}=${repo_digest}" >> "$record"
+  echo "Published ${name}: ${repo_digest}"
 done
 
-echo "PASS: all four images built and passed the vulnerability gate"
+# The migrator intentionally reuses the exact auth-service artifact.
+auth_digest="$(grep '^AUTH_SERVICE_IMAGE=' "$record" | cut -d= -f2-)"
+echo "MIGRATOR_IMAGE=${auth_digest}" >> "$record"
+
+echo "PASS: all four images built, scanned, published, and recorded"
+echo "Release record: ${record}"
+cat "$record"
