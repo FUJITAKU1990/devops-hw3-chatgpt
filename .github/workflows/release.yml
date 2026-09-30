@@ -177,4 +177,8 @@ jobs:
             echo "- Source commit: ${{ steps.mode.outputs.source_commit }}"
             echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo "- Production: https://$PRODUCTION_HOST/"
+            echo "- Result: ${{ job.status }}"
+            if [[ '${{ job.status }}' != 'success' ]]; then
+              echo '- Recovery: inspect the failed run, then manually dispatch this workflow with recovery_commit set to a previous known-good release commit.'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
