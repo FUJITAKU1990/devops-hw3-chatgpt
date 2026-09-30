@@ -25,6 +25,7 @@ services:
     environment:
       CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-17643-team11.s3d.cmu.edu}
     ports: !override
+      - "80:80"
       - "443:443"
     volumes:
       - caddy_data:/data
