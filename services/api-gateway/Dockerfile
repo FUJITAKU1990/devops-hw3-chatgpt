@@ -1,5 +1,12 @@
 FROM node:20-alpine
 
+# Apply available Alpine security fixes and update npm to a Node 20-compatible
+# release whose bundled dependencies include the patched tar version.
+RUN apk update \
+    && apk upgrade \
+    && npm install -g npm@11.21.0 \
+    && rm -rf /var/cache/apk/*
+
 WORKDIR /app
 
 # 1. Build context is now root, so we just setup the specific service
