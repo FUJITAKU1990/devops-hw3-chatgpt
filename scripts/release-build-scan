@@ -60,6 +60,8 @@ for component in "${components[@]}"; do
   else
     status=$?
     echo "BLOCK: ${name} (Grype exit ${status}); image was not published" >&2
+    echo "Grype findings for ${name}:" >&2
+    cat "${artifact_dir}/${name}.grype.json" >&2
     exit "$status"
   fi
 
