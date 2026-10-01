@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Build, scan, publish, and record every student-controlled runtime image.
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <owner/repository> <40-character source commit>" >&2
+  exit 64
+fi
+
+repository="${1,,}"
+commit="$2"
+if [[ ! "$repository" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]] ||
+   [[ ! "$commit" =~ ^[a-f0-9]{40}$ ]]; then
+  echo "Invalid repository or source commit" >&2
+  exit 64
+fi
+
+for tool in docker syft grype; do
+  command -v "$tool" >/dev/null || { echo "Missing required tool: $tool" >&2; exit 69; }
+done
+
+artifact_dir="${ARTIFACT_DIR:-hw3/release-evidence}"
+mkdir -p "$artifact_dir"
+record="${artifact_dir}/release-${commit}.env"
+: > "$record"
+
+workflow_run="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-$repository}/actions/runs/${GITHUB_RUN_ID:-local}"
+{
+  echo "SOURCE_COMMIT=${commit}"
+  echo "WORKFLOW_RUN=${workflow_run}"
+  echo "RELEASE_CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} >> "$record"
+
+docker build -f docker/base.Dockerfile -t tartan-base:hw3-build .
+docker tag tartan-base:hw3-build tartan-base:local
+
+components=(
+  'auth-service:services/auth-service/Dockerfile:AUTH_SERVICE_IMAGE'
+  'ticket-service:services/ticket-service/Dockerfile:TICKET_SERVICE_IMAGE'
+  'api-gateway:services/api-gateway/Dockerfile:API_GATEWAY_IMAGE'
+  'frontend:frontend/Dockerfile:FRONTEND_IMAGE'
+)
+
+for component in "${components[@]}"; do
+  IFS=: read -r name dockerfile record_key <<< "$component"
+  image="ghcr.io/${repository}/${name}:sha-${commit}"
+
+  echo "Building ${name} from ${commit}"
+  docker build --label "org.opencontainers.image.revision=${commit}" \
+    -f "$dockerfile" -t "$image" .
+
+  echo "Generating SBOM for ${image}"
+  syft "docker:${image}" -o "syft-json=${artifact_dir}/${name}.sbom.json"
+
+  echo "Checking fixable critical vulnerabilities in ${image}"
+  if grype "sbom:${artifact_dir}/${name}.sbom.json" \
+    --only-fixed --fail-on critical -o json \
+    > "${artifact_dir}/${name}.grype.json"; then
+    echo "PASS: ${name}"
+  else
+    status=$?
+    echo "BLOCK: ${name} (Grype exit ${status}); image was not published" >&2
+    exit "$status"
+  fi
+
+  echo "Publishing ${image}"
+  docker push "$image"
+
+  # Pull the published tag before reading RepoDigests. This makes digest capture
+  # independent of whether the local Docker engine updated RepoDigests on push.
+  docker pull "$image" >/dev/null
+  repo_digest="$(docker image inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$image" \
+    | grep '^ghcr\.io/.*@sha256:[a-f0-9]\{64\}$' \
+    | head -n 1)"
+  if [[ ! "$repo_digest" =~ ^ghcr\.io/.+@sha256:[a-f0-9]{64}$ ]]; then
+    echo "Could not determine registry digest for ${image}: ${repo_digest}" >&2
+    exit 70
+  fi
+
+  echo "${record_key}=${repo_digest}" >> "$record"
+  echo "Published ${name}: ${repo_digest}"
+done
+
+# The migrator intentionally reuses the exact auth-service artifact.
+auth_digest="$(grep '^AUTH_SERVICE_IMAGE=' "$record" | cut -d= -f2-)"
+echo "MIGRATOR_IMAGE=${auth_digest}" >> "$record"
+
+# Keep a compact, human-readable immutable release manifest alongside the raw
+# scanner output. This is suitable for exporting into hw3/ as durable evidence.
+manifest="${artifact_dir}/release-${commit}.md"
+{
+  echo "# Release ${commit}"
+  echo
+  echo "- Source commit: \`${commit}\`"
+  echo "- Workflow run: ${workflow_run}"
+  echo "- Created (UTC): $(grep '^RELEASE_CREATED_AT=' "$record" | cut -d= -f2-)"
+  echo
+  echo "## Exact runtime artifacts"
+  while IFS='=' read -r key value; do
+    case "$key" in
+      *_IMAGE) echo "- ${key}: \`${value}\`" ;;
+    esac
+  done < "$record"
+} > "$manifest"
+
+echo "PASS: all four images built, scanned, published, and recorded"
+echo "Release record: ${record}"
+echo "Release manifest: ${manifest}"
+cat "$record"
