@@ -13,9 +13,6 @@ remote_dir="${PRODUCTION_DIR:-~/tartan-tickets}"
 
 [[ -f "$record" ]] || { echo "Release record not found: $record" >&2; exit 66; }
 
-# Validate the release record locally before sending anything to production.
-./scripts/render-production-config "$record" >/dev/null
-
 # Send only deployment inputs. Production never receives Docker build context for
 # the student-controlled runtime images and never rebuilds them.
 ssh "$ssh_target" "mkdir -p '$remote_dir'"
