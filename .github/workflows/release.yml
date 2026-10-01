@@ -87,7 +87,7 @@ jobs:
           ./scripts/render-production-config "hw3/release-evidence/release-$commit.env" >/dev/null
 
       - name: Upload release evidence
-        if: steps.mode.outputs.recovery == 'false'
+        if: always() && steps.mode.outputs.recovery == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ steps.mode.outputs.source_commit }}
