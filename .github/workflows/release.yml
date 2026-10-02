@@ -3,6 +3,10 @@ name: HW3 Release
 on:
   push:
     branches: [main]
+    # Documentation-only changes (for example DESIGN.md evidence updates) do
+    # not change any deployed artifact, so they do not start a new release.
+    paths-ignore:
+      - '**.md'
   workflow_dispatch:
     inputs:
       recovery_commit:
@@ -95,12 +99,19 @@ jobs:
         shell: bash
         env:
           PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+        # The runner is a persistent VM, so the deploy key must not be written
+        # to disk. Load it into a job-scoped ssh-agent instead; the agent is
+        # killed in the final cleanup step.
         run: |
           set -euo pipefail
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$PRODUCTION_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$PRODUCTION_HOST" >> ~/.ssh/known_hosts
+          eval "$(ssh-agent -a "$RUNNER_TEMP/ssh-agent.sock" -s)" >/dev/null
+          printf '%s\n' "$PRODUCTION_SSH_KEY" | ssh-add -q -
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          if ! ssh-keygen -F "$PRODUCTION_HOST" >/dev/null 2>&1; then
+            ssh-keyscan -H "$PRODUCTION_HOST" >> ~/.ssh/known_hosts
+          fi
 
       - name: Deploy exact release digests
         shell: bash
@@ -188,3 +199,12 @@ jobs:
               echo '- Recovery: inspect the failed run, then manually dispatch this workflow with recovery_commit set to a previous known-good release commit.'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove deploy key from runner
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${SSH_AGENT_PID:-}" ]] && kill -0 "$SSH_AGENT_PID" 2>/dev/null; then
+            kill "$SSH_AGENT_PID"
+          fi
+          rm -f "$RUNNER_TEMP/ssh-agent.sock"
