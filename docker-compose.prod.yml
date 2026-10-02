@@ -1,0 +1,36 @@
+# Production-only Compose override for HW3.
+# Student-controlled runtime components are pulled by immutable registry digest.
+# This file must be used together with docker-compose.yml and a release record
+# exported into the environment. No student-controlled image is rebuilt on the VM.
+services:
+  migrator:
+    image: ${MIGRATOR_IMAGE:?MIGRATOR_IMAGE must be an immutable release digest}
+    build: !reset null
+
+  auth-service:
+    image: ${AUTH_SERVICE_IMAGE:?AUTH_SERVICE_IMAGE must be an immutable release digest}
+    build: !reset null
+
+  ticket-service:
+    image: ${TICKET_SERVICE_IMAGE:?TICKET_SERVICE_IMAGE must be an immutable release digest}
+    build: !reset null
+
+  api-gateway:
+    image: ${API_GATEWAY_IMAGE:?API_GATEWAY_IMAGE must be an immutable release digest}
+    build: !reset null
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must be an immutable release digest}
+    build: !reset null
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-17643-team11.s3d.cmu.edu}
+    ports: !override
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

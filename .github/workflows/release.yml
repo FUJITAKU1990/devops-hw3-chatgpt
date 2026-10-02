@@ -1,0 +1,190 @@
+name: HW3 Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      recovery_commit:
+        description: '40-character source commit of a previously published known-good release; leave blank for a normal release of the selected ref'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  PRODUCTION_HOST: 17643-team11.s3d.cmu.edu
+  PRODUCTION_USER: student931
+
+jobs:
+  release:
+    runs-on: self-hosted
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate mode
+        id: mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          recovery='${{ inputs.recovery_commit }}'
+          if [[ -n "$recovery" ]]; then
+            [[ "$recovery" =~ ^[a-f0-9]{40}$ ]] || {
+              echo 'recovery_commit must be a 40-character lowercase commit SHA' >&2
+              exit 64
+            }
+            echo 'recovery=true' >> "$GITHUB_OUTPUT"
+            echo "source_commit=$recovery" >> "$GITHUB_OUTPUT"
+          else
+            echo 'recovery=false' >> "$GITHUB_OUTPUT"
+            echo "source_commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Syft and Grype
+        if: steps.mode.outputs.recovery == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSfL https://get.anchore.io/syft | sh -s -- -b "$RUNNER_TEMP/bin"
+          curl -sSfL https://get.anchore.io/grype | sh -s -- -b "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build, scan, publish, and record release
+        if: steps.mode.outputs.recovery == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/release-build-scan "$GITHUB_REPOSITORY" '${{ steps.mode.outputs.source_commit }}'
+
+      - name: Restore known-good release record
+        if: steps.mode.outputs.recovery == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          commit='${{ steps.mode.outputs.source_commit }}'
+          mkdir -p hw3/release-evidence
+          gh run download --repo "$GITHUB_REPOSITORY" \
+            --name "release-$commit" \
+            --dir hw3/release-evidence
+          test -f "hw3/release-evidence/release-$commit.env"
+
+      - name: Upload release evidence
+        if: always() && steps.mode.outputs.recovery == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.mode.outputs.source_commit }}
+          path: hw3/release-evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Configure production SSH
+        shell: bash
+        env:
+          PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$PRODUCTION_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$PRODUCTION_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy exact release digests
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          commit='${{ steps.mode.outputs.source_commit }}'
+
+          printf '%s' "$GHCR_TOKEN" | \
+            ssh "$PRODUCTION_USER@$PRODUCTION_HOST" \
+              "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+
+          trap 'ssh "$PRODUCTION_USER@$PRODUCTION_HOST" "docker logout ghcr.io" >/dev/null 2>&1 || true' EXIT
+
+          ./scripts/deploy-production \
+            "$PRODUCTION_USER@$PRODUCTION_HOST" \
+            "hw3/release-evidence/release-$commit.env"
+
+      - name: Verify running digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit='${{ steps.mode.outputs.source_commit }}'
+          ./scripts/verify-production-state \
+            "$PRODUCTION_USER@$PRODUCTION_HOST" \
+            "hw3/release-evidence/release-$commit.env"
+
+      - name: Verify production HTTPS reachability
+        shell: bash
+        env:
+          TARTAN_BASE_URL: https://17643-team11.s3d.cmu.edu
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --retry 10 --retry-delay 3 \
+            "$TARTAN_BASE_URL/" >/dev/null
+          curl --fail --show-error --silent --retry 5 --retry-delay 2 \
+            "$TARTAN_BASE_URL/api/events" >/dev/null
+
+      # Course external probes are the authoritative HW3 health evidence for
+      # core user journeys. Their result is checked separately using the Canvas
+      # deployment guide once staff publishes/provides that guide.
+      - name: Record deployment action
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit='${{ steps.mode.outputs.source_commit }}'
+          record="hw3/release-evidence/deployment-$GITHUB_RUN_ID.md"
+          {
+            echo "# Deployment $GITHUB_RUN_ID"
+            echo
+            echo "- Mode: ${{ steps.mode.outputs.recovery == 'true' && 'recovery' || 'normal' }}"
+            echo "- Source commit: \`$commit\`"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Production: https://$PRODUCTION_HOST/"
+            echo "- Running digest verification: passed"
+            echo "- HTTPS reachability (/ and /api/events): passed"
+            echo "- Course external probes: verify separately and link from hw3/DESIGN.md"
+          } > "$record"
+          cat "$record"
+
+      - name: Upload deployment evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ github.run_id }}
+          path: hw3/release-evidence/deployment-${{ github.run_id }}.md
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Release summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## HW3 release'
+            echo "- Mode: ${{ steps.mode.outputs.recovery == 'true' && 'recovery' || 'normal' }}"
+            echo "- Source commit: ${{ steps.mode.outputs.source_commit }}"
+            echo "- Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Production: https://$PRODUCTION_HOST/"
+            echo "- Result: ${{ job.status }}"
+            if [[ '${{ job.status }}' != 'success' ]]; then
+              echo '- Recovery: inspect the failed run, then manually dispatch this workflow with recovery_commit set to a previous known-good release commit.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

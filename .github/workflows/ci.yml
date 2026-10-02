@@ -13,8 +13,12 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 5
+    # A self-hosted runner keeps Docker state between jobs. Use a run-scoped
+    # Compose project so CI cannot reuse or modify another checkout's stack.
+    env:
+      COMPOSE_PROJECT_NAME: tartan-ci-${{ github.run_id }}
     permissions:
       contents: read
     steps:
@@ -30,8 +34,13 @@ jobs:
 
       - name: Prepare env
         run: |
-          cp -n .env.example .env
+          # Self-hosted workspaces persist untracked files between jobs. Recreate
+          # .env on every run so CI never reuses credentials from an earlier run.
+          cp .env.example .env
           ./scripts/generate-env-secrets .env
+
+      - name: Clean stale CI stack
+        run: docker compose down -v --remove-orphans --timeout 1
 
       # Docker image builds and the host-side install/build/type-check chain
       # are independent of each other (each Dockerfile installs its own
@@ -82,6 +91,12 @@ jobs:
           fi
           exit "$FAIL"
 
+      - name: Refresh external payment service
+        # PAYMENT_SERVICE_IMAGE uses the course-provided mutable :latest tag.
+        # GitHub-hosted runners started with an empty image cache, but this
+        # self-hosted runner persists images across jobs.
+        run: docker compose pull payment-service
+
       - name: Start application stack
         run: docker compose up -d
 
@@ -117,7 +132,7 @@ jobs:
         run: docker compose down -v --timeout 1
   
   secrets-scan:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 2
     permissions:
       contents: read
@@ -165,7 +180,7 @@ jobs:
             --redact --exit-code 1
   
   guardrails-check:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 2
     permissions:
       contents: read
@@ -177,7 +192,7 @@ jobs:
         run: ./scripts/check-secret-guardrails
 
   ci-integrity-check:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 2
     permissions:
       contents: read
@@ -189,7 +204,7 @@ jobs:
         run: ./scripts/check-ci-integrity
 
   bonus-hardening-check:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 1
     permissions:
       contents: read

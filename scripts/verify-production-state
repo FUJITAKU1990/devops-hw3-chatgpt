@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Verify that production is running the exact student-controlled release digests.
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <ssh-target> <release-record.env>" >&2
+  exit 64
+fi
+
+ssh_target="$1"
+record="$2"
+remote_dir="${PRODUCTION_DIR:-tartan-tickets}"
+
+[[ -f "$record" ]] || {
+  echo "Release record not found: $record" >&2
+  exit 66
+}
+
+record_name="$(basename "$record")"
+
+# The release record contains only release metadata and immutable image digests.
+# Copy it to production so Compose sees the same image variables used at deploy time.
+scp "$record" "$ssh_target:$remote_dir/$record_name"
+
+ssh "$ssh_target" bash -s -- "$remote_dir" "$record_name" <<'REMOTE'
+set -euo pipefail
+
+remote_dir="$1"
+record_name="$2"
+cd "$remote_dir"
+
+[[ -f .env.production ]] || {
+  echo "Missing $remote_dir/.env.production" >&2
+  exit 66
+}
+
+[[ -f "$record_name" ]] || {
+  echo "Missing release record: $remote_dir/$record_name" >&2
+  exit 66
+}
+
+set -a
+# Release metadata provides the immutable student-controlled image digests.
+# shellcheck disable=SC1090
+source "$record_name"
+# Production-only configuration and secrets remain on the VM.
+# shellcheck disable=SC1091
+source .env.production
+set +a
+
+expected=(
+  "migrator:${MIGRATOR_IMAGE}"
+  "auth-service:${AUTH_SERVICE_IMAGE}"
+  "ticket-service:${TICKET_SERVICE_IMAGE}"
+  "api-gateway:${API_GATEWAY_IMAGE}"
+  "frontend:${FRONTEND_IMAGE}"
+)
+
+for item in "${expected[@]}"; do
+  service="${item%%:*}"
+  expected_image="${item#*:}"
+  expected_digest="${expected_image##*@}"
+
+  container_id="$(
+    docker compose \
+      -f docker-compose.yml \
+      -f docker-compose.prod.yml \
+      ps -q --all "$service"
+  )"
+
+  [[ -n "$container_id" ]] || {
+    echo "NOT RUNNING ${service}" >&2
+    exit 1
+  }
+
+  actual_image="$(docker inspect --format='{{.Image}}' "$container_id")"
+
+  if [[ "$actual_image" != "$expected_digest" ]]; then
+    echo "MISMATCH ${service}: expected ${expected_digest}, running ${actual_image}" >&2
+    exit 1
+  fi
+
+  echo "MATCH ${service}: ${actual_image}"
+done
+
+echo "PASS: production matches the recorded release digests"
+REMOTE
