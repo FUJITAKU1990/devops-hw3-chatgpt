@@ -461,6 +461,35 @@ const tartanPayHeaders = () => ({
     headers: { Authorization: `Bearer ${TARTANPAY_API_KEY}`, 'Content-Type': 'application/json' },
 });
 
+// TartanPay's POST /v1/customers is "find by email, then insert" without
+// handling the unique-email violation. Two concurrent first checkouts for the
+// same user make TartanPay throw an unhandled error and exit, which takes the
+// payment service down for every later checkout. Serialize customer creation
+// per email inside this (single-instance) service so TartanPay never sees
+// concurrent creates for the same customer.
+const customerCreationQueue = new Map<string, Promise<void>>();
+
+async function withCustomerCreationLock<T>(email: string, fn: () => Promise<T>): Promise<T> {
+    const key = email.trim().toLowerCase();
+    const previous = customerCreationQueue.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    const tail = previous.then(() => current);
+    customerCreationQueue.set(key, tail);
+
+    await previous;
+    try {
+        return await fn();
+    } finally {
+        release();
+        if (customerCreationQueue.get(key) === tail) {
+            customerCreationQueue.delete(key);
+        }
+    }
+}
+
 app.post('/events/:id/checkout', async (req, res) => {
     try {
         const userId = getUserIdFromAuth(req);
@@ -680,13 +709,15 @@ app.post('/events/:id/checkout', async (req, res) => {
         }
 
         // 1. Ensure a TartanPay customer exists (idempotent by email)
-        const custRes = await axios.post(
-            `${PAYMENT_SERVICE_URL}/v1/customers`,
-            {
-                email: user.email,
-                name: user.name
-            },
-            tartanPayHeaders()
+        const custRes = await withCustomerCreationLock(user.email, () =>
+            axios.post(
+                `${PAYMENT_SERVICE_URL}/v1/customers`,
+                {
+                    email: user.email,
+                    name: user.name
+                },
+                tartanPayHeaders()
+            )
         );
 
         const customerId = custRes.data.id;
