@@ -34,7 +34,9 @@ jobs:
 
       - name: Prepare env
         run: |
-          cp -n .env.example .env
+          # Self-hosted workspaces persist untracked files between jobs. Recreate
+          # .env on every run so CI never reuses credentials from an earlier run.
+          cp .env.example .env
           ./scripts/generate-env-secrets .env
 
       - name: Clean stale CI stack
