@@ -84,7 +84,6 @@ jobs:
             --name "release-$commit" \
             --dir hw3/release-evidence
           test -f "hw3/release-evidence/release-$commit.env"
-          ./scripts/render-production-config "hw3/release-evidence/release-$commit.env" >/dev/null
 
       - name: Upload release evidence
         if: always() && steps.mode.outputs.recovery == 'false'
@@ -108,9 +107,19 @@ jobs:
 
       - name: Deploy exact release digests
         shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         run: |
           set -euo pipefail
           commit='${{ steps.mode.outputs.source_commit }}'
+
+          printf '%s' "$GHCR_TOKEN" | \
+            ssh "$PRODUCTION_USER@$PRODUCTION_HOST" \
+              "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+
+          trap 'ssh "$PRODUCTION_USER@$PRODUCTION_HOST" "docker logout ghcr.io" >/dev/null 2>&1 || true' EXIT
+
           ./scripts/deploy-production \
             "$PRODUCTION_USER@$PRODUCTION_HOST" \
             "hw3/release-evidence/release-$commit.env"

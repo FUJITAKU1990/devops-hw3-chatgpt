@@ -9,7 +9,7 @@ fi
 
 ssh_target="$1"
 record="$2"
-remote_dir="${PRODUCTION_DIR:-~/tartan-tickets}"
+remote_dir="${PRODUCTION_DIR:-tartan-tickets}"
 
 [[ -f "$record" ]] || { echo "Release record not found: $record" >&2; exit 66; }
 
