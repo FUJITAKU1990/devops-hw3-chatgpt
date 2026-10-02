@@ -20,10 +20,7 @@ env:
 
 jobs:
   release:
-    # TODO(HW3): replace with the exact course-published self-hosted runner labels.
-    # The same replacement is required for every job in ci.yml because HW3 says
-    # every GitHub Actions job must use the course-provided self-hosted runners.
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 45
 
     steps:

@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 5
     permissions:
       contents: read
@@ -117,7 +117,7 @@ jobs:
         run: docker compose down -v --timeout 1
   
   secrets-scan:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 2
     permissions:
       contents: read
@@ -165,7 +165,7 @@ jobs:
             --redact --exit-code 1
   
   guardrails-check:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 2
     permissions:
       contents: read
@@ -177,7 +177,7 @@ jobs:
         run: ./scripts/check-secret-guardrails
 
   ci-integrity-check:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 2
     permissions:
       contents: read
@@ -189,7 +189,7 @@ jobs:
         run: ./scripts/check-ci-integrity
 
   bonus-hardening-check:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 1
     permissions:
       contents: read
