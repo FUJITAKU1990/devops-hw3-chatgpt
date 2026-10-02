@@ -91,6 +91,12 @@ jobs:
           fi
           exit "$FAIL"
 
+      - name: Refresh external payment service
+        # PAYMENT_SERVICE_IMAGE uses the course-provided mutable :latest tag.
+        # GitHub-hosted runners started with an empty image cache, but this
+        # self-hosted runner persists images across jobs.
+        run: docker compose pull payment-service
+
       - name: Start application stack
         run: docker compose up -d
 
