@@ -52,4 +52,4 @@ For the mistake-classification bonus, reviewing ticket-service's real code found
 
 ## HW3
 
-For the HW3 design baseline, I used ChatGPT to review the assignment criteria, inspect the existing HW2 Compose and CI configuration, and refine the release path and evidence plan.
+For the HW3 design baseline, I used ChatGPT to review the assignment criteria, inspect the existing HW2 Compose and CI configuration, and refine the release path and evidence plan. I chose push deployment, PR review as the human approval point, digest-based artifacts, and manual recovery. ChatGPT also helped me duplicate the submitted course repository into a private working repository and identify the application images that the release must cover. I will update this entry as implementation and deployment work progresses.
