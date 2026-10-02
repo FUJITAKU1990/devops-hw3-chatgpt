@@ -15,6 +15,10 @@ jobs:
   ci:
     runs-on: self-hosted
     timeout-minutes: 5
+    # A self-hosted runner keeps Docker state between jobs. Use a run-scoped
+    # Compose project so CI cannot reuse or modify another checkout's stack.
+    env:
+      COMPOSE_PROJECT_NAME: tartan-ci-${{ github.run_id }}
     permissions:
       contents: read
     steps:
@@ -32,6 +36,9 @@ jobs:
         run: |
           cp -n .env.example .env
           ./scripts/generate-env-secrets .env
+
+      - name: Clean stale CI stack
+        run: docker compose down -v --remove-orphans --timeout 1
 
       # Docker image builds and the host-side install/build/type-check chain
       # are independent of each other (each Dockerfile installs its own
