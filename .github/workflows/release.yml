@@ -17,6 +17,8 @@ on:
 permissions:
   contents: read
   packages: write
+  # Recovery mode downloads a previous run's release-record artifact.
+  actions: read
 
 env:
   PRODUCTION_HOST: 17643-team11.s3d.cmu.edu
