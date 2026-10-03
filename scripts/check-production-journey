@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Exercise the core Tartan Tickets user journey against a deployed site.
+
+Usage: check-production-journey <base-url> <.env.production>
+
+Steps: home page, event list and details, register, activation email,
+activate, sign in, checkout through TartanPay, My Orders, and the order
+confirmation email. Reads MP_UI_AUTH (Mailpit login) from the env file and
+never prints it. Exits nonzero at the first failing step.
+
+Side effects on the target: one new journey-check-*@example.com user and one
+free General Admission order for the seeded "Buggy Freeroll Practice" event.
+"""
+import base64
+import json
+import re
+import secrets
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+if len(sys.argv) != 3:
+    sys.exit("Usage: check-production-journey <base-url> <.env.production>")
+
+BASE = sys.argv[1].rstrip("/")
+ENV_FILE = sys.argv[2]
+EVENT_NAME = "Buggy Freeroll Practice"
+
+
+def env_value(key):
+    with open(ENV_FILE) as f:
+        for line in f:
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    sys.exit(f"{key} not found in {ENV_FILE}")
+
+
+MAIL_AUTH = "Basic " + base64.b64encode(env_value("MP_UI_AUTH").encode()).decode()
+
+
+def call(method, path, body=None, token=None, auth=None):
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if auth:
+        headers["Authorization"] = auth
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(BASE + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw[:1] in (b"{", b"[") else raw)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()[:300]
+
+
+def step(name, ok, detail=""):
+    print(f"{'PASS' if ok else 'FAIL'}  {name}  {detail}".rstrip(), flush=True)
+    if not ok:
+        print("RESULT: FAIL")
+        sys.exit(1)
+
+
+last_mail = {}
+
+
+def wait_mail(to, subject_word):
+    for _ in range(20):
+        s, body = call("GET", "/mailpit/api/v1/search?query=" + urllib.parse.quote(f"to:{to}"), auth=MAIL_AUTH)
+        last_mail["search_http"] = s
+        if s == 200:
+            for m in body.get("messages", []):
+                s2, msg = call("GET", f"/mailpit/api/v1/message/{m['ID']}", auth=MAIL_AUTH)
+                if s2 == 200 and subject_word in (msg.get("Subject") or "").lower():
+                    return msg
+        time.sleep(1)
+    return None
+
+
+s, _ = call("GET", "/")
+step("home page", s == 200, f"HTTP {s}")
+
+s, events = call("GET", "/api/events")
+step("list events", s == 200 and isinstance(events, list) and len(events) > 0, f"HTTP {s}")
+event = next((e for e in events if e.get("name") == EVENT_NAME), None)
+step("find seeded event", event is not None, EVENT_NAME)
+ticket_type = next((t for t in event["ticketTypes"] if t["availabilityModel"] == "GA_POOL"), None)
+step("find GA ticket type", ticket_type is not None)
+
+email = f"journey-check-{int(time.time())}-{secrets.token_hex(4)}@example.com"
+password = "JourneyCheck1!"
+s, _ = call("POST", "/api/register", {"name": "Journey Check", "email": email, "password": password})
+step("register", s == 201, f"HTTP {s} ({email})")
+
+msg = wait_mail(email, "activate")
+step("activation email received", msg is not None, f"mailpit search HTTP {last_mail.get('search_http')}")
+match = re.search(r"token=([a-f0-9]{20,})", f"{msg.get('Text', '')}\n{msg.get('HTML', '')}", re.I)
+step("activation link present", match is not None)
+s, _ = call("POST", "/api/activate", {"token": match.group(1)})
+step("activate account", s == 200, f"HTTP {s}")
+
+s, login = call("POST", "/api/login", {"email": email, "password": password})
+step("sign in", s == 200 and isinstance(login, dict) and bool(login.get("token")), f"HTTP {s}")
+token = login["token"]
+
+s, _ = call("GET", f"/api/events/{event['id']}")
+step("event details", s == 200, f"HTTP {s}")
+
+s, checkout = call("POST", f"/api/events/{event['id']}/checkout",
+                   {"tickets": {str(ticket_type["id"]): 1}, "totalPriceCents": 0}, token=token)
+ok = s == 200 and isinstance(checkout, dict) and checkout.get("success") is True
+step("checkout through TartanPay", ok,
+     f"HTTP {s} record={checkout.get('recordLocator') if isinstance(checkout, dict) else checkout}")
+
+s, orders = call("GET", "/api/orders", token=token)
+found = s == 200 and isinstance(orders, list) and any(
+    o.get("recordLocator") == checkout["recordLocator"] for o in orders)
+step("order visible in My Orders", found, f"HTTP {s}")
+
+step("order confirmation email received", wait_mail(email, "order confirmed") is not None)
+print("RESULT: PASS (core user journey)")

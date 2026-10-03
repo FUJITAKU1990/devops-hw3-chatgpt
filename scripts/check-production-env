@@ -36,6 +36,12 @@ for key in "${required[@]}"; do
   [[ "$value" != "CHANGE_ME" ]] || { echo "Replace CHANGE_ME for ${key}" >&2; exit 65; }
 done
 
+# Format checks for values whose consumers reject other shapes. Both were
+# found misconfigured in production: Mailpit rejected every login and
+# TartanPay rejected the API key, so every checkout returned 500.
+[[ "$MP_UI_AUTH" == ?*:?* ]] || { echo "MP_UI_AUTH must have the form user:password" >&2; exit 65; }
+[[ "$TARTANPAY_API_KEY" == tp_sk_?* ]] || { echo "TARTANPAY_API_KEY must start with tp_sk_" >&2; exit 65; }
+
 [[ "$APP_URL" == https://* ]] || { echo "APP_URL must use https://" >&2; exit 65; }
 [[ "$CADDY_SITE_ADDRESS" == "17643-team11.s3d.cmu.edu" ]] || {
   echo "Unexpected CADDY_SITE_ADDRESS: $CADDY_SITE_ADDRESS" >&2
